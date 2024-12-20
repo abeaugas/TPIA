@@ -3,8 +3,28 @@ import torch.nn as nn
 import torch.optim as optim
 import tqdm
 import matplotlib.pyplot as plt
+import statistics
+from math import sqrt
 from utils.AudioDataset import AudioDataset
 from utils.TD_network import CNNNetwork
+
+
+def plot_confidence_interval(x, values, z=1.96, color='#2187bb', horizontal_line_width=0.02):
+    mean = statistics.mean(values)
+    stdev = statistics.stdev(values)
+    confidence_interval = z * stdev / sqrt(len(values))
+
+    left = x - horizontal_line_width / 2
+    top = mean - confidence_interval
+    right = x + horizontal_line_width / 2
+    bottom = mean + confidence_interval
+    plt.plot([x, x], [top, bottom], color=color)
+    plt.plot([left, right], [top, top], color=color)
+    plt.plot([left, right], [bottom, bottom], color=color)
+    plt.plot(x, mean, 'o', color='#f44336')
+
+    return mean, confidence_interval
+
 
 def train_single_epoch(model, dataloader, loss_fn, optimizer, device):
     model.train()
@@ -23,6 +43,7 @@ def train_single_epoch(model, dataloader, loss_fn, optimizer, device):
             optimizer.step()
             pbar.update(1)
     print("")
+
 
 def evaluate(model, dataloader, loss_fn, device,name=""):
     model.eval()
@@ -48,6 +69,7 @@ def evaluate(model, dataloader, loss_fn, device,name=""):
     accuracy = 100 * correct / total
     avg_loss = running_loss / len(dataloader)
     return avg_loss, accuracy
+
 
 def train(model, train_loader, test_loader, loss_fn, optimizer, device, epochs, patience):
     best_loss = float('inf')
@@ -85,6 +107,7 @@ def train(model, train_loader, test_loader, loss_fn, optimizer, device, epochs, 
     print('Finished Training')
     return(best_accuracy)
 
+
 if __name__ == "__main__":
     ##########################
     ##### Hyperparamètres ####
@@ -110,51 +133,51 @@ if __name__ == "__main__":
     optimizer = optim.AdamW(model.parameters(), lr=0.001)
 
     # Boucler pour tester plusieurs pourcentages
-    accuracies = []
-    percentages = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
+    percentages = [0.01]
     for percent in percentages:
-        # Charger les données
-        if OUTSIZE:
-            labels = {"rain": 0, "walking":1}
-            trainData = AudioDataset("meta/bdd_A_train.csv", labels)
-            testData = AudioDataset("meta/bdd_A_test.csv", labels)
-        else:
-            labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
-            trainData = AudioDataset("meta/bdd_B_train.csv", labels,frac_=percent)
+        accuracies = []
+        # Répéter 5 fois pour l'intervale de confiance
+        for i in range(5):
+            # Charger les données
+            if OUTSIZE:
+                labels = {"rain": 0, "walking":1}
+                trainData = AudioDataset("meta/bdd_A_train.csv", labels)
+                testData = AudioDataset("meta/bdd_A_test.csv", labels)
+            else:
+                labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
+                trainData = AudioDataset("meta/bdd_B_train.csv", labels,frac_=percent)
+                # ICI : utiliser l'uncertainty sampling pour sélectionner une partie du potential train à utiliser pour l'entraînement
+                testData = AudioDataset("meta/bdd_B_dev.csv", labels)
+                model.load_state_dict(pt.load('BestModelSave/best_model.pth'))
+            
+            train_loader = pt.utils.data.DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
+            test_loader = pt.utils.data.DataLoader(testData)
+
+
+            print(f"\n### Training with: {percent * 100}% , iteration {i} ###")
+            print(f"Total number of parameters: {model.count_parameters()}")
+
+            #######################
+            # Entraîner le modèle #
+            #######################
+            train(model, train_loader, test_loader, loss_fn, optimizer, device, EPOCHS, PATIENCE)
+
+            ############################################################################
+            # Charger le meilleur modèle sauvegardé et évaluer sur les données de test #
+            ############################################################################
             testData = AudioDataset("meta/bdd_B_test.csv", labels)
-            model.load_state_dict(pt.load('best_model.pth'))
-        
-        train_loader = pt.utils.data.DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
-        test_loader = pt.utils.data.DataLoader(testData)
+            test_loader = pt.utils.data.DataLoader(testData)
+            # Charger le meilleur modèle sauvegardé
+            model.load_state_dict(pt.load('best_model.pth', weights_only=True))
 
 
-        print(f"\n### Training with: {percent * 100}% ###")
-        print(f"Total number of parameters: {model.count_parameters()}")
+            # Évaluer le modèle sur les données de test
+            test_loss, test_accuracy = evaluate(model, test_loader, loss_fn, device, "TestB")
+            accuracies.append(test_accuracy)
+            print(f"TestB Loss: {test_loss:.4f}, TestB Accuracy: {test_accuracy:.2f}%")
 
-        #######################
-        # Entraîner le modèle #
-        #######################
-        accuracies.append(train(model, train_loader, test_loader, loss_fn, optimizer, device, EPOCHS, PATIENCE))
-    for val in percentages:
-        val *= 100
-    plt.plot(percentages, accuracies)
+        plot_confidence_interval(percent, accuracies)
+
+    plt.title('Accuracies')
     plt.ylim(0, 100)
     plt.show()
-
-
-
-    ############################################################################
-    # Charger le meilleur modèle sauvegardé et évaluer sur les données de test #
-    ############################################################################
-    # testData = AudioDataset("meta/bdd_B_test.csv", labels)
-    # test_loader = pt.utils.data.DataLoader(testData)
-    # # Charger le meilleur modèle sauvegardé
-    model.load_state_dict(pt.load('best_model.pth', weights_only=True))
-
-
-    # # Évaluer le modèle sur les données de test
-    # test_loss, test_accuracy = evaluate(model, test_loader, loss_fn, device, "TestB")
-    # print(f"TestB Loss: {test_loss:.4f}, TestB Accuracy: {test_accuracy:.2f}%")
-
-
-
