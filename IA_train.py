@@ -4,6 +4,7 @@ import torch.optim as optim
 import tqdm
 import matplotlib.pyplot as plt
 import statistics
+import numpy as np
 from math import sqrt
 from utils.AudioDataset import AudioDataset
 from utils.TD_network import CNNNetwork
@@ -24,6 +25,28 @@ def plot_confidence_interval(x, values, z=1.96, color='#2187bb', horizontal_line
     plt.plot(x, mean, 'o', color='#f44336')
 
     return mean, confidence_interval
+
+
+def least_confidence(net,test_data,n):
+  """
+  Returns the sample index from test_data based on the uncertainty scores
+  using the least confidence sampling
+
+  Keyword arguments:
+    net       : the trained neural network
+    test_data : the samples as the input of the net
+    n         : number of the best candidates based on least confidence
+
+  Output:
+    res.keys(): a list of indexes from input samples (test_data)
+  """
+  uncertainty_dict={} # as sample_index: uncertainty score
+  for i,(x,y) in enumerate(test_data):
+    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
+    uncertainty_dict[i]=1-np.max(preds[0].cpu().detach().numpy())
+  res = dict(sorted(uncertainty_dict.items(),
+                    key = lambda x: x[1], reverse = True)[:n])
+  return res.keys()
 
 
 def train_single_epoch(model, dataloader, loss_fn, optimizer, device):
@@ -133,51 +156,52 @@ if __name__ == "__main__":
     optimizer = optim.AdamW(model.parameters(), lr=0.001)
 
     # Boucler pour tester plusieurs pourcentages
-    percentages = [0.01]
+    percentages = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
+    accuracies = []
     for percent in percentages:
-        accuracies = []
-        # Répéter 5 fois pour l'intervale de confiance
-        for i in range(5):
-            # Charger les données
-            if OUTSIZE:
-                labels = {"rain": 0, "walking":1}
-                trainData = AudioDataset("meta/bdd_A_train.csv", labels)
-                testData = AudioDataset("meta/bdd_A_test.csv", labels)
-            else:
-                labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
-                trainData = AudioDataset("meta/bdd_B_train.csv", labels,frac_=percent)
-                # ICI : utiliser l'uncertainty sampling pour sélectionner une partie du potential train à utiliser pour l'entraînement
-                testData = AudioDataset("meta/bdd_B_dev.csv", labels)
-                model.load_state_dict(pt.load('BestModelSave/best_model.pth'))
-            
-            train_loader = pt.utils.data.DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
-            test_loader = pt.utils.data.DataLoader(testData)
+        # Charger les données
+        if OUTSIZE:
+            labels = {"rain": 0, "walking":1}
+            trainData = AudioDataset("meta/bdd_A_train.csv", labels)
+            testData = AudioDataset("meta/bdd_A_test.csv", labels)
+        else:
+            labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
+            trainData = AudioDataset("meta/bdd_B_train.csv", labels)
+            uncertaintyDataIndices = list(least_confidence(model, trainData, int(len(trainData.data_frame)*percent))) # Sélectioner les données avec uncertainty sampling
+            trainData = AudioDataset("meta/bdd_B_train.csv", labels, confident_list=uncertaintyDataIndices)
+            testData = AudioDataset("meta/bdd_B_dev.csv", labels)
+            model.load_state_dict(pt.load('BestModelSave/best_model.pth'))
+        
+        train_loader = pt.utils.data.DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)
+        test_loader = pt.utils.data.DataLoader(testData)
 
 
-            print(f"\n### Training with: {percent * 100}% , iteration {i} ###")
-            print(f"Total number of parameters: {model.count_parameters()}")
+        print(f"\n### Training with: {percent * 100}%  ###")
+        print(f"Total number of parameters: {model.count_parameters()}")
 
-            #######################
-            # Entraîner le modèle #
-            #######################
-            train(model, train_loader, test_loader, loss_fn, optimizer, device, EPOCHS, PATIENCE)
+        #######################
+        # Entraîner le modèle #
+        #######################
+        train(model, train_loader, test_loader, loss_fn, optimizer, device, EPOCHS, PATIENCE)
 
-            ############################################################################
-            # Charger le meilleur modèle sauvegardé et évaluer sur les données de test #
-            ############################################################################
-            testData = AudioDataset("meta/bdd_B_test.csv", labels)
-            test_loader = pt.utils.data.DataLoader(testData)
-            # Charger le meilleur modèle sauvegardé
-            model.load_state_dict(pt.load('best_model.pth', weights_only=True))
+        ############################################################################
+        # Charger le meilleur modèle sauvegardé et évaluer sur les données de test #
+        ############################################################################
+        testData = AudioDataset("meta/bdd_B_test.csv", labels)
+        test_loader = pt.utils.data.DataLoader(testData)
+        # Charger le meilleur modèle sauvegardé
+        model.load_state_dict(pt.load('best_model.pth', weights_only=True))
 
 
-            # Évaluer le modèle sur les données de test
-            test_loss, test_accuracy = evaluate(model, test_loader, loss_fn, device, "TestB")
-            accuracies.append(test_accuracy)
-            print(f"TestB Loss: {test_loss:.4f}, TestB Accuracy: {test_accuracy:.2f}%")
+        # Évaluer le modèle sur les données de test
+        test_loss, test_accuracy = evaluate(model, test_loader, loss_fn, device, "TestB")
+        accuracies.append(test_accuracy)
+        print(f"TestB Loss: {test_loss:.4f}, TestB Accuracy: {test_accuracy:.2f}%")
 
-        plot_confidence_interval(percent, accuracies)
 
+    print(accuracies)
+    print(percentages)
+    plt.plot(percentages, accuracies, marker='o')
     plt.title('Accuracies')
     plt.ylim(0, 100)
     plt.show()
