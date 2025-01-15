@@ -133,7 +133,7 @@ if __name__ == "__main__":
     optimizer = optim.AdamW(model.parameters(), lr=0.001)
 
     # Boucler pour tester plusieurs pourcentages
-    percentages = [0.01]
+    percentages = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
     for percent in percentages:
         accuracies = []
         # Répéter 5 fois pour l'intervale de confiance
@@ -154,7 +154,7 @@ if __name__ == "__main__":
             test_loader = pt.utils.data.DataLoader(testData)
 
 
-            print(f"\n### Training with: {percent * 100}% , iteration {i} ###")
+            print(f"\n### Training with: {percent * 100}% , iteration {i + 1} ###")
             print(f"Total number of parameters: {model.count_parameters()}")
 
             #######################
