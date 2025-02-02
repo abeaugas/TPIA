@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import statistics
 import numpy as np
 from math import sqrt
-from scipy.stats import entropy
+from numpy.linalg import norm as euclidean_dis
 from utils.AudioDataset import AudioDataset
 from utils.TD_network import CNNNetwork
 
@@ -28,91 +28,40 @@ def plot_confidence_interval(x, values, z=1.96, color='#2187bb', horizontal_line
     return mean, confidence_interval
 
 
-def least_confidence(net,test_data,n):
-  """
-  Returns the sample index from test_data based on the uncertainty scores
-  using the least confidence sampling
-
-  Keyword arguments:
-    net       : the trained neural network
-    test_data : the samples as the input of the net
-    n         : number of the best candidates based on least confidence
-
-  Output:
-    res.keys(): a list of indexes from input samples (test_data)
-  """
-  uncertainty_dict={} # as sample_index: uncertainty score
-  for i,(x,y) in enumerate(test_data):
-    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
-    uncertainty_dict[i]=1-np.max(preds[0].cpu().detach().numpy())
-  res = dict(sorted(uncertainty_dict.items(),
+def get_model_outliers(net,training_data,test_data,n):
+    uncertainty_dict={} # as sample_index: uncertainty score
+    # calculating the mean of training samples in hidden neuros
+    trainingSet_hidden_values=[]
+    for i,(x,y) in enumerate(training_data):
+        # preds is a probability distribution of classes
+        _,x4,_ = net(pt.unsqueeze(x,0), return_all_layers=True)
+        trainingSet_hidden_values.append(x4[0].cpu().detach().numpy())
+    # calculate mean vector
+    trainingSet_hidden_avg = np.mean(np.array(trainingSet_hidden_values),axis=0)
+    # calculate distance/difference of test set from training set
+    for i,(x,y) in enumerate(test_data):
+        # preds is a probability distribution of classes
+        _,x4,_ = net(pt.unsqueeze(x,0), return_all_layers=True)
+        # uncertainty score is defined as the euclidean distance from training mean
+        uncertainty_dict[i]=euclidean_dis(x4[0].cpu().detach().numpy()-trainingSet_hidden_avg)
+    # calculate ranking
+    res = dict(sorted(uncertainty_dict.items(),
                     key = lambda x: x[1], reverse = True)[:n])
-  return res.keys()
+    return res.keys()
 
-def margin_confidence(net,test_data,n):
-  """
-  Returns the sample index from test_data based on the uncertainty scores
-  using the margin of confidence sampling
-
-  Keyword arguments:
-    net       : the trained neural network
-    test_data : the samples as the input of the net
-    n         : number of the best candidates based on margin of confidence
-
-  Output:
-    res.keys(): a list of indexes from input samples (test_data)
-  """
-  uncertainty_dict={} # as sample_index: uncertainty score
-  for i,(x,y) in enumerate(test_data):
-    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
-    preds_sorted = np.sort(preds[0].cpu().detach().numpy())
-    uncertainty_dict[i]=preds_sorted[0]-preds_sorted[1]
-  res = dict(sorted(uncertainty_dict.items(),
+def get_representative_samples(training_data,test_data,n):
+    uncertainty_dict={} # as sample_index: uncertainty score
+    # calculating the mean of training/test samples
+    trainingSet_avg = np.mean(np.array(training_data),axis=0)
+    testSet_avg = np.mean(np.array(test_data),axis=0)
+    # calculate distance/difference of test set from mean of training/test set
+    for i in range(len(test_data)):
+        # uncertainty score is defined as the ratio of distance from centroids
+        uncertainty_dict[i]=euclidean_dis(test_data[i]-trainingSet_avg)/euclidean_dis(test_data[i]-testSet_avg)
+    # calculate ranking
+    res = dict(sorted(uncertainty_dict.items(),
                     key = lambda x: x[1], reverse = True)[:n])
-  return res.keys()
-
-def ratio_confidence(net,test_data,n):
-  """
-  Returns the sample index from test_data based on the uncertainty scores
-  using the ratio of confidence sampling
-
-  Keyword arguments:
-    net       : the trained neural network
-    test_data : the samples as the input of the net
-    n         : number of the best candidates based on ratio of confidence
-
-  Output:
-    res.keys(): a list of indexes from input samples (test_data)
-  """
-  uncertainty_dict={} # as sample_index: uncertainty score
-  for i,(x,y) in enumerate(test_data):
-    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
-    preds_sorted = np.sort(preds[0].cpu().detach().numpy())
-    uncertainty_dict[i]=preds_sorted[0]/preds_sorted[1]
-  res = dict(sorted(uncertainty_dict.items(),
-                    key = lambda x: x[1], reverse = True)[:n])
-  return res.keys()
-
-def entropy_confidence(net,test_data,n):
-  """
-  Returns the sample index from test_data based on the uncertainty scores
-  using the entropy of confidence sampling
-
-  Keyword arguments:
-    net       : the trained neural network
-    test_data : the samples as the input of the net
-    n         : number of the best candidates based on entropy of confidence
-
-  Output:
-    res.keys(): a list of indexes from input samples (test_data)
-  """
-  uncertainty_dict={} # as sample_index: uncertainty score
-  for i,(x,y) in enumerate(test_data):
-    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
-    uncertainty_dict[i]=entropy(preds[0].cpu().detach().numpy())
-  res = dict(sorted(uncertainty_dict.items(),
-                    key = lambda x: x[1], reverse = True)[:n])
-  return res.keys()
+    return res.keys()
 
 
 def train_single_epoch(model, dataloader, loss_fn, optimizer, device):
@@ -233,9 +182,9 @@ if __name__ == "__main__":
         else:
             labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
             trainData = AudioDataset("meta/bdd_B_train.csv", labels)
-            uncertaintyDataIndices = list(entropy_confidence(model, trainData, int(len(trainData.data_frame)*percent))) # Sélectioner les données avec uncertainty sampling
-            trainData = AudioDataset("meta/bdd_B_train.csv", labels, confident_list=uncertaintyDataIndices)
             testData = AudioDataset("meta/bdd_B_dev.csv", labels)
+            uncertaintyDataIndices = list(get_representative_samples(trainData, testData, int(len(trainData.data_frame)*percent))) # Sélectioner les données avec uncertainty sampling
+            trainData = AudioDataset("meta/bdd_B_train.csv", labels, confident_list=uncertaintyDataIndices)
             model.load_state_dict(pt.load('BestModelSave/best_model.pth'))
         
         train_loader = pt.utils.data.DataLoader(trainData, batch_size=BATCH_SIZE, shuffle=True)

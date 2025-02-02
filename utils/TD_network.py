@@ -7,6 +7,7 @@ Created on Thu Nov 21 09:58:29 2024
 
 import torch as pt
 import torch.nn as nn
+from scipy.special import softmax
 
 
 
@@ -49,19 +50,22 @@ class CNNNetwork(nn.Module):
         self.fc4B = nn.Linear(in_features=8, out_features=4)
         self.output = nn.Softmax(dim=1)
 
-    def forward(self, x):
+    def forward(self, x, return_all_layers=False):
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.fc3(x)
+        x1 = self.fc1(x)
+        x2 = self.fc2(x1)
+        x3 = self.fc3(x2)
         if self.outsize == True:
-            logits = self.fc4A(x)
+            logits = self.fc4A(x3)
         else:
-            logits = self.fc4B(x)
-        output = self.output(logits)
-        return output
+            logits = self.fc4B(x3)
+        x4 = self.output(logits)
+        if return_all_layers:
+            return x4.softmax(dim=1),x4,x3
+        else:
+            return x4.softmax(dim=1)
     
     
     def count_parameters(self):
