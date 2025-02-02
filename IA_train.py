@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import statistics
 import numpy as np
 from math import sqrt
+from scipy.stats import entropy
 from utils.AudioDataset import AudioDataset
 from utils.TD_network import CNNNetwork
 
@@ -44,6 +45,71 @@ def least_confidence(net,test_data,n):
   for i,(x,y) in enumerate(test_data):
     preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
     uncertainty_dict[i]=1-np.max(preds[0].cpu().detach().numpy())
+  res = dict(sorted(uncertainty_dict.items(),
+                    key = lambda x: x[1], reverse = True)[:n])
+  return res.keys()
+
+def margin_confidence(net,test_data,n):
+  """
+  Returns the sample index from test_data based on the uncertainty scores
+  using the margin of confidence sampling
+
+  Keyword arguments:
+    net       : the trained neural network
+    test_data : the samples as the input of the net
+    n         : number of the best candidates based on margin of confidence
+
+  Output:
+    res.keys(): a list of indexes from input samples (test_data)
+  """
+  uncertainty_dict={} # as sample_index: uncertainty score
+  for i,(x,y) in enumerate(test_data):
+    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
+    preds_sorted = np.sort(preds[0].cpu().detach().numpy())
+    uncertainty_dict[i]=preds_sorted[0]-preds_sorted[1]
+  res = dict(sorted(uncertainty_dict.items(),
+                    key = lambda x: x[1], reverse = True)[:n])
+  return res.keys()
+
+def ratio_confidence(net,test_data,n):
+  """
+  Returns the sample index from test_data based on the uncertainty scores
+  using the ratio of confidence sampling
+
+  Keyword arguments:
+    net       : the trained neural network
+    test_data : the samples as the input of the net
+    n         : number of the best candidates based on ratio of confidence
+
+  Output:
+    res.keys(): a list of indexes from input samples (test_data)
+  """
+  uncertainty_dict={} # as sample_index: uncertainty score
+  for i,(x,y) in enumerate(test_data):
+    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
+    preds_sorted = np.sort(preds[0].cpu().detach().numpy())
+    uncertainty_dict[i]=preds_sorted[0]/preds_sorted[1]
+  res = dict(sorted(uncertainty_dict.items(),
+                    key = lambda x: x[1], reverse = True)[:n])
+  return res.keys()
+
+def entropy_confidence(net,test_data,n):
+  """
+  Returns the sample index from test_data based on the uncertainty scores
+  using the entropy of confidence sampling
+
+  Keyword arguments:
+    net       : the trained neural network
+    test_data : the samples as the input of the net
+    n         : number of the best candidates based on entropy of confidence
+
+  Output:
+    res.keys(): a list of indexes from input samples (test_data)
+  """
+  uncertainty_dict={} # as sample_index: uncertainty score
+  for i,(x,y) in enumerate(test_data):
+    preds = net(pt.unsqueeze(x,0)) # preds is a probability distribution of classes
+    uncertainty_dict[i]=entropy(preds[0].cpu().detach().numpy())
   res = dict(sorted(uncertainty_dict.items(),
                     key = lambda x: x[1], reverse = True)[:n])
   return res.keys()
@@ -167,7 +233,7 @@ if __name__ == "__main__":
         else:
             labels = {"rain": 0, "walking":1, "wind": 2, "car_passing": 3}
             trainData = AudioDataset("meta/bdd_B_train.csv", labels)
-            uncertaintyDataIndices = list(least_confidence(model, trainData, int(len(trainData.data_frame)*percent))) # Sélectioner les données avec uncertainty sampling
+            uncertaintyDataIndices = list(entropy_confidence(model, trainData, int(len(trainData.data_frame)*percent))) # Sélectioner les données avec uncertainty sampling
             trainData = AudioDataset("meta/bdd_B_train.csv", labels, confident_list=uncertaintyDataIndices)
             testData = AudioDataset("meta/bdd_B_dev.csv", labels)
             model.load_state_dict(pt.load('BestModelSave/best_model.pth'))
